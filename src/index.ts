@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import './db.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -115,6 +116,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('Server startup error:', err);
+  process.stderr.write(`Server startup error: ${err instanceof Error ? err.message : String(err)}\n`);
   process.exit(1);
 });
