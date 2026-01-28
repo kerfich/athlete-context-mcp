@@ -120,6 +120,11 @@ async function main() {
     version: "0.1.0",
   });
 
+  // Declare capabilities BEFORE registering handlers
+  (server as any).serverCapabilities = {
+    tools: {},
+  };
+
   // Initialize handler - MUST come first to declare capabilities
   server.setRequestHandler(
     InitializeSchema,
