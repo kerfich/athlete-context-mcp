@@ -201,7 +201,7 @@ Configuration `claude_desktop_config.json` :
       "args": [
         "--yes",
         "--package",
-        "github:kerfich/athlete-context-mcp#v0.1.0",
+        "github:kerfich/athlete-context-mcp#v0.2.0",
         "athlete-context-mcp"
       ]
     }
@@ -211,11 +211,111 @@ Configuration `claude_desktop_config.json` :
 
 **Notes:**
 - Remplacer `kerfich/athlete-context-mcp` par votre GitHub org/repo.
-- Remplacer `v0.1.0` par un tag/release ou commit SHA pour reproductibilité (**recommandé**).
+- Remplacer `v0.2.0` par un tag/release ou commit SHA pour reproductibilité (**recommandé**).
 - Alternative: `github:kerfich/athlete-context-mcp#main` pour toujours utiliser la branche main (moins stable).
 - **Prérequis**: Node 20+ installé localement.
 
 Redémarrer Claude Desktop après la modification.
+
+### Option 3: Claude Desktop macOS avec PATH minimal
+
+Claude Desktop s'exécute dans un environnement avec PATH limité sur macOS (Homebrew n'ajoute pas `/opt/homebrew/bin` par défaut). Si vous recevez une erreur `command not found: npx`, utilisez le chemin absolu vers npx ou node.
+
+#### Configuration avec chemin absolu
+
+Si Node 20 est installé via Homebrew:
+
+```bash
+# Trouver le chemin absolu vers npx
+which npx
+# Output: /opt/homebrew/bin/npx
+
+# Ou via Homebrew
+ls /opt/homebrew/opt/node@20/bin/
+# Output: node  npm  npx
+```
+
+Mettez à jour `claude_desktop_config.json` avec le chemin absolu:
+
+```json
+{
+  "mcpServers": {
+    "athlete": {
+      "command": "/opt/homebrew/opt/node@20/bin/npx",
+      "args": [
+        "--yes",
+        "--package",
+        "github:kerfich/athlete-context-mcp#v0.2.0",
+        "athlete-context-mcp"
+      ]
+    }
+  }
+}
+```
+
+Ou directement avec node:
+
+```json
+{
+  "mcpServers": {
+    "athlete": {
+      "command": "/opt/homebrew/opt/node@20/bin/node",
+      "args": ["/path/to/athlete-context-mcp/dist/index.js"]
+    }
+  }
+}
+```
+
+#### Vérifier votre configuration
+
+```bash
+# Vérifier que Node 20 est installé
+node --version
+# v20.x.x
+
+# Vérifier le PATH de npx
+ls -la /opt/homebrew/opt/node@20/bin/npx
+# ou si vous utilisez node@latest
+ls -la /opt/homebrew/bin/npx
+```
+
+Redémarrer Claude Desktop après la modification.
+
+## Robustesse du binaire
+
+Le binaire npm est conçu pour fonctionner dans des environnements avec PATH minimal (ex: Claude Desktop, containers, CI/CD).
+
+### Vérifications de sécurité
+
+Le build automatise les contrôles:
+
+```bash
+# Build compile + rend le binaire exécutable + vérifie l'intégrité
+npm run build
+
+# Verify.dist vérifie:
+# 1. Présence de McpServer dans le code compilé
+# 2. Permissions exécutables sur dist/index.js
+npm run verify:dist
+```
+
+### Shebang et chaîne d'exécution
+
+- ✅ Shebang `#!/usr/bin/env node` présent dans dist/index.js
+- ✅ dist/index.js est exécutable (permissions 755)
+- ✅ Champ "bin" du package.json: `"athlete-context-mcp": "dist/index.js"`
+
+### Gestion des erreurs
+
+Le serveur écrit **uniquement** sur stderr pour les logs (stdout reste propre pour JSON-RPC):
+
+```bash
+# Erreur : écrite sur stderr
+athlete-context-mcp server connected on stdio
+
+# Réponse JSON-RPC : écrite sur stdout
+{"result":{"protocolVersion":"2024-11-05",...},"jsonrpc":"2.0","id":1}
+```
 
 ## Déploiement
 
