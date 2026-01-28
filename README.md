@@ -227,3 +227,53 @@ git push origin main --follow-tags
 ```
 
 Créer une release GitHub correspondante au tag pour distribution via `npx`.
+## Test local
+
+### Démarrer le serveur
+
+```bash
+npm run build
+npm start
+```
+
+Le serveur écoute sur stdin/stdout et affiche les logs sur stderr:
+```
+athlete-context-mcp server connected on stdio
+```
+
+### Tester manuellement avec echo
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}' | node dist/index.js
+```
+
+Response:
+```json
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"athlete-context-mcp","version":"0.2.0"}}}
+```
+
+### Tester tools/list
+
+```bash
+echo '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | node dist/index.js
+```
+
+## Test npx depuis GitHub
+
+Installer et lancer la dernière version depuis GitHub:
+
+```bash
+# Depuis un tag spécifique (recommandé pour reproductibilité)
+npx --yes --package github:kerfich/athlete-context-mcp#v0.2.0 athlete-context-mcp
+
+# Ou depuis main (branche par défaut)
+npx --yes --package github:kerfich/athlete-context-mcp#main athlete-context-mcp
+```
+
+Le serveur démarre et attend les requêtes JSON-RPC 2.0 sur stdin.
+
+Pour tester une requête:
+```bash
+(echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}'; sleep 1) | \
+  npx --yes --package github:kerfich/athlete-context-mcp#main athlete-context-mcp
+```
