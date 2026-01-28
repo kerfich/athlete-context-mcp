@@ -1,6 +1,6 @@
 {
   "name": "athlete-context-mcp",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "MCP server providing athlete context for use with garmin-mcp",
   "main": "dist/index.js",
   "type": "module",

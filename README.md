@@ -22,8 +22,33 @@ Le serveur utilise:
 - **SDK officiel**: `@modelcontextprotocol/sdk` (v1.25.3) pour l'API de gestion des tools et le transport stdio
 - **Transport**: stdio (newline-delimited JSON-RPC 2.0), compatible Claude Desktop
 - **Validation**: `zod` pour tous les inputs et schémas JSON
-- **Stockage**: SQLite local (`./data/athlete.db`, auto-migré au démarrage)
+- **Stockage**: SQLite local (chemin configurable, auto-migré au démarrage)
 - **Extraction**: heuristique déterministe (pas d'appels LLM)
+
+## Configuration - Répertoire de données
+
+Par défaut, la base de données SQLite est stockée dans un répertoire portable:
+
+- **macOS**: `~/Library/Application Support/athlete-context-mcp/athlete.db`
+- **Linux/Autres**: `~/.athlete-context-mcp/athlete.db`
+
+Vous pouvez personnaliser le répertoire via la variable d'environnement:
+
+```bash
+# Utiliser un répertoire custom
+export ATHLETE_MCP_DATA_DIR=/custom/path
+npm start
+
+# Ou sur une seule commande
+ATHLETE_MCP_DATA_DIR=/custom/path npx github:kerfich/athlete-context-mcp#v0.2.2 athlete-context-mcp
+```
+
+Pour déboguer le chemin utilisé:
+
+```bash
+MCP_DEBUG=1 npm start
+# Affichera: [athlete-context-mcp] Data directory: /path/to/data
+```
 
 ## Protocole MCP (JSON-RPC 2.0)
 
@@ -127,7 +152,10 @@ CREATE TABLE IF NOT EXISTS versions_state (id INTEGER PRIMARY KEY, version INTEG
 
 ## Fichier DB
 
-- Emplacement: `./data/athlete.db`
+- Emplacement: Configurable via `ATHLETE_MCP_DATA_DIR` (voir section "Configuration")
+- Par défaut:
+  - **macOS**: `~/Library/Application Support/athlete-context-mcp/athlete.db`
+  - **Linux/Autres**: `~/.athlete-context-mcp/athlete.db`
 - Créé automatiquement au premier démarrage
 - Compatible avec better-sqlite3
 
