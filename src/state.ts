@@ -66,9 +66,9 @@ export function computeState(sinceDays = 14): AthleteState {
 
   // persist versions_state (upsert id=1)
   const ts = nowISO();
-  const existing = db.prepare('SELECT version FROM versions_state WHERE id=1').get();
+  const existing = db.prepare('SELECT version FROM versions_state WHERE id=1').get() as any;
   if (existing) {
-    const newv = existing.version + 1;
+    const newv = (existing.version as number) + 1;
     db.prepare('UPDATE versions_state SET version=?, json=?, updated_at=? WHERE id=1').run(newv, JSON.stringify(state), ts);
   } else {
     db.prepare('INSERT INTO versions_state (id,version,json,updated_at) VALUES (1,1,?,?)').run(JSON.stringify(state), ts);

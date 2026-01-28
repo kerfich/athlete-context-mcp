@@ -6,16 +6,16 @@ import { computeState } from "./state.js";
 
 // Helper for versioned upsert/get
 function getVersioned(table: string) {
-  const row = db.prepare(`SELECT version,json,updated_at FROM ${table} WHERE id=1`).get();
+  const row = db.prepare(`SELECT version,json,updated_at FROM ${table} WHERE id=1`).get() as any;
   if (!row) return null;
-  return { version: row.version, updated_at: row.updated_at, data: JSON.parse(row.json) };
+  return { version: row.version as number, updated_at: row.updated_at as string, data: JSON.parse(row.json as string) };
 }
 
 function upsertVersioned(table: string, jsonObj: any) {
   const now = nowISO();
-  const existing = db.prepare(`SELECT version FROM ${table} WHERE id=1`).get();
+  const existing = db.prepare(`SELECT version FROM ${table} WHERE id=1`).get() as any;
   if (existing) {
-    const newv = existing.version + 1;
+    const newv = (existing.version as number) + 1;
     db.prepare(`UPDATE ${table} SET version=?, json=?, updated_at=? WHERE id=1`).run(newv, JSON.stringify(jsonObj), now);
     return { ok: true, version: newv, updated_at: now };
   } else {
@@ -43,9 +43,9 @@ export function add_note(input: z.infer<typeof NoteInput>) {
 }
 
 export function get_note(activity_id: string) {
-  const row = db.prepare('SELECT * FROM notes WHERE activity_id = ? ORDER BY id DESC LIMIT 1').get(String(activity_id));
+  const row = db.prepare('SELECT * FROM notes WHERE activity_id = ? ORDER BY id DESC LIMIT 1').get(String(activity_id)) as any;
   if (!row) return null;
-  return { ...row, extracted: JSON.parse(row.extracted_json || '{}'), tags: row.tags_json ? JSON.parse(row.tags_json) : [] };
+  return { ...row, extracted: JSON.parse((row.extracted_json as string) || '{}'), tags: (row.tags_json as string) ? JSON.parse(row.tags_json as string) : [] };
 }
 
 export function search_notes(query: string, since?: string, until?: string, limit = 50) {
@@ -54,20 +54,20 @@ export function search_notes(query: string, since?: string, until?: string, limi
   if (since) { sql += ' AND created_at >= ?'; params.push(since); }
   if (until) { sql += ' AND created_at <= ?'; params.push(until); }
   sql += ' ORDER BY created_at DESC LIMIT ?'; params.push(limit);
-  const rows = db.prepare(sql).all(...params);
-  return rows.map((r:any)=>({ ...r, extracted: JSON.parse(r.extracted_json||'{}'), tags: r.tags_json ? JSON.parse(r.tags_json) : [] }));
+  const rows = db.prepare(sql).all(...params) as any[];
+  return rows.map((r: any)=>({ ...r, extracted: JSON.parse((r.extracted_json as string)||'{}'), tags: (r.tags_json as string) ? JSON.parse(r.tags_json as string) : [] }));
 }
 
 export function get_state() {
-  const row = db.prepare('SELECT json,version,updated_at FROM versions_state WHERE id=1').get();
+  const row = db.prepare('SELECT json,version,updated_at FROM versions_state WHERE id=1').get() as any;
   if (!row) return null;
-  return { state: JSON.parse(row.json), version: row.version, updated_at: row.updated_at };
+  return { state: JSON.parse(row.json as string), version: row.version as number, updated_at: row.updated_at as string };
 }
 
 export function update_state(options?: { since?: string }) {
   const state = computeState();
-  const row = db.prepare('SELECT version,updated_at FROM versions_state WHERE id=1').get();
-  const version = row ? row.version : 1;
-  const updated_at = row ? row.updated_at : nowISO();
+  const row = db.prepare('SELECT version,updated_at FROM versions_state WHERE id=1').get() as any;
+  const version = row ? (row.version as number) : 1;
+  const updated_at = row ? (row.updated_at as string) : nowISO();
   return { ok: true, version, updated_at, state };
 }
