@@ -12,6 +12,18 @@ import { zodToJsonSchema } from "./schema-utils.js";
 import { AthleteProfile, AthleteGoals, AthletePolicies, NoteInput } from "./models.js";
 
 // Define request schemas for SDK
+const InitializeSchema = z.object({
+  method: z.literal("initialize"),
+  params: z.object({
+    protocolVersion: z.string(),
+    capabilities: z.record(z.unknown()).optional(),
+    clientInfo: z.object({
+      name: z.string(),
+      version: z.string(),
+    }).optional(),
+  }).optional(),
+});
+
 const ToolsListSchema = z.object({
   method: z.literal("tools/list"),
   params: z.record(z.unknown()).optional(),
@@ -107,6 +119,21 @@ async function main() {
     name: "athlete-context-mcp",
     version: "0.1.0",
   });
+
+  // Initialize handler - MUST come first to declare capabilities
+  server.setRequestHandler(
+    InitializeSchema,
+    async () => ({
+      protocolVersion: "2024-11-05",
+      capabilities: {
+        tools: {},
+      },
+      serverInfo: {
+        name: "athlete-context-mcp",
+        version: "0.1.0",
+      },
+    })
+  );
 
   // List tools
   server.setRequestHandler(
