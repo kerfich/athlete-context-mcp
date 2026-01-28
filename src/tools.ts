@@ -1,4 +1,4 @@
-import db, { nowISO } from "./db.js";
+import db, { nowISO, withRetry } from "./db.js";
 import { z } from "zod";
 import { NoteInput } from "./models.js";
 import { extractFromText as extractor } from "./extractor.js";
@@ -12,16 +12,18 @@ function getVersioned(table: string) {
 }
 
 function upsertVersioned(table: string, jsonObj: any) {
-  const now = nowISO();
-  const existing = db.prepare(`SELECT version FROM ${table} WHERE id=1`).get() as any;
-  if (existing) {
-    const newv = (existing.version as number) + 1;
-    db.prepare(`UPDATE ${table} SET version=?, json=?, updated_at=? WHERE id=1`).run(newv, JSON.stringify(jsonObj), now);
-    return { ok: true, version: newv, updated_at: now };
-  } else {
-    db.prepare(`INSERT INTO ${table} (id,version,json,updated_at) VALUES (1,1,?,?)`).run(JSON.stringify(jsonObj), now);
-    return { ok: true, version: 1, updated_at: now };
-  }
+  return withRetry(() => {
+    const now = nowISO();
+    const existing = db.prepare(`SELECT version FROM ${table} WHERE id=1`).get() as any;
+    if (existing) {
+      const newv = (existing.version as number) + 1;
+      db.prepare(`UPDATE ${table} SET version=?, json=?, updated_at=? WHERE id=1`).run(newv, JSON.stringify(jsonObj), now);
+      return { ok: true, version: newv, updated_at: now };
+    } else {
+      db.prepare(`INSERT INTO ${table} (id,version,json,updated_at) VALUES (1,1,?,?)`).run(JSON.stringify(jsonObj), now);
+      return { ok: true, version: 1, updated_at: now };
+    }
+  });
 }
 
 // Tools implementations
@@ -33,13 +35,15 @@ export const get_policies = () => getVersioned('versions_policies');
 export const upsert_policies = (policies: any) => upsertVersioned('versions_policies', policies);
 
 export function add_note(input: z.infer<typeof NoteInput>) {
-  const now = nowISO();
-  const extracted = extractor(input.note_text);
-  const tags_json = input.tags ? JSON.stringify(input.tags) : null;
-  const note_date = input.note_date || now.split('T')[0];
-  const res = db.prepare('INSERT INTO notes (activity_id,note_date,raw_text,tags_json,extracted_json,created_at) VALUES (?,?,?,?,?,?)')
-    .run(String(input.activity_id), note_date, input.note_text, tags_json, JSON.stringify(extracted), now);
-  return { note_id: res.lastInsertRowid, activity_id: String(input.activity_id), extracted, created_at: now };
+  return withRetry(() => {
+    const now = nowISO();
+    const extracted = extractor(input.note_text);
+    const tags_json = input.tags ? JSON.stringify(input.tags) : null;
+    const note_date = input.note_date || now.split('T')[0];
+    const res = db.prepare('INSERT INTO notes (activity_id,note_date,raw_text,tags_json,extracted_json,created_at) VALUES (?,?,?,?,?,?)')
+      .run(String(input.activity_id), note_date, input.note_text, tags_json, JSON.stringify(extracted), now);
+    return { note_id: res.lastInsertRowid, activity_id: String(input.activity_id), extracted, created_at: now };
+  });
 }
 
 export function get_note(activity_id: string) {

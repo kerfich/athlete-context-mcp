@@ -50,6 +50,48 @@ MCP_DEBUG=1 npm start
 # Affichera: [athlete-context-mcp] Data directory: /path/to/data
 ```
 
+## Configuration - Concurrence SQLite (multi-instances)
+
+Quand plusieurs instances MCP démarrent (ex: `athlete` + `athlete_debug` dans Claude Desktop), la base de données SQLite peut rencontrer des verrous. Le serveur gère ceci automatiquement :
+
+### Pragmas SQLite
+
+À l'initialisation:
+- **WAL (Write-Ahead Logging)**: Active les lectures concurrentes
+- **busy_timeout=5000**: Attend jusqu'à 5 secondes si la DB est verrouillée
+- **synchronous=NORMAL**: Balance durabilité/performance
+- **locking_mode=NORMAL**: Permet plusieurs lecteurs
+
+### Stratégie de Retry
+
+Les écritures (insert/update) sont encapsulées dans une logique de retry:
+- **Max retries**: 5 tentatives
+- **Backoff exponentiel**: 50ms → 100ms → 200ms → 300ms → 500ms
+- **Erreurs gérées**: `SQLITE_BUSY`, `SQLITE_LOCKED`, `database is locked`
+- **Logs**: Si échec final, message d'erreur propre (pas de crash silencieux)
+
+Debug les retries:
+```bash
+MCP_DEBUG=1 npm start
+# Affichera: [athlete-context-mcp] SQLite: WAL enabled, busy_timeout=5000ms
+# Et: [athlete-context-mcp] Database locked (attempt 1/5), retrying in 50ms...
+```
+
+### Si vous lancez debug + production
+
+Pour éviter les contentions si vous testez plusieurs instances simultanément, utilisez des data directories séparés:
+
+```bash
+# Terminal 1: Instance prod
+export ATHLETE_MCP_DATA_DIR=~/.athlete-context-mcp-prod
+npm start
+
+# Terminal 2: Instance debug
+export ATHLETE_MCP_DATA_DIR=~/.athlete-context-mcp-debug
+export MCP_DEBUG=1
+npm start
+```
+
 ## Protocole MCP (JSON-RPC 2.0)
 
 Le serveur expose les méthodes MCP standard via process stdio (une ligne JSON par message).
