@@ -10,7 +10,10 @@ function findNumber(patterns: RegExp[], text: string): number | undefined {
   }
 }
 
-export function extractFromText(raw: string): Extracted {
+export function extractFromText(raw: string | undefined | null): Extracted {
+  if (!raw || typeof raw !== "string") {
+    return { raw_text: "", pain: undefined, social_context: undefined };
+  }
   const text = raw.toLowerCase();
   const rpe = findNumber([/rpe\s*[:=]?\s*(\d{1,2})/, /(\d)\s*\/\s*10\s*\b/, /ressenti\s*(\d)\/10/], text);
   const stress = findNumber([/stress\s*[:=]?\s*(\d{1,2})/, /stress\s*(\d)\/10/], text);

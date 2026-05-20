@@ -1,449 +1,391 @@
-# athlete-context-mcp
+# athlete-context-mcp — v0.3.0
 
-Serveur MCP (Model Context Protocol) qui fournit le contexte athlète (profil, objectifs, policies), stocke des notes de ressenti liées aux activités Garmin et maintient un état synthétique.
+Serveur MCP (Model Context Protocol) qui persiste le contexte d'un athlète
+triathlon entre les conversations Claude : profil physiologique, objectifs
+de saison, politiques d'entraînement, état quotidien et journal de notes.
 
-## Installation locale
+---
+
+## Sommaire
+
+- [Installation](#installation)
+- [Configuration Claude Desktop](#configuration-claude-desktop)
+- [Tools disponibles](#tools-disponibles)
+- [Schémas de données](#schémas-de-données)
+- [Base de données SQLite](#base-de-données-sqlite)
+- [Extraction automatique des notes](#extraction-automatique-des-notes)
+- [Débogage](#débogage)
+
+---
+
+## Installation
 
 ```bash
+git clone https://github.com/kerfich/athlete-context-mcp
+cd athlete-context-mcp
 npm install
-npm run build
-npm start
+npm run build        # compile TypeScript → dist/
 ```
 
-## Dev
+Prérequis : **Node 20+**.
+
+---
+
+## Configuration Claude Desktop
+
+Fichier : `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
+
+### Configuration recommandée (build local)
+
+```json
+{
+  "mcpServers": {
+    "athlete": {
+      "command": "/bin/bash",
+      "args": [
+        "-lc",
+        "exec 2>>\"$HOME/athlete-mcp.log\"; export PATH=/opt/homebrew/opt/node@20/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin; export ATHLETE_MCP_DATA_DIR=\"$HOME/Library/Application Support/athlete-context-mcp\"; /opt/homebrew/opt/node@20/bin/node /CHEMIN/VERS/athlete-context-mcp/dist/index.js"
+      ]
+    }
+  }
+}
+```
+
+Remplacer `/CHEMIN/VERS/athlete-context-mcp` par le chemin absolu du repo cloné.
+
+Redémarrer Claude Desktop après modification.
+
+### Avec mode debug
+
+```json
+{
+  "mcpServers": {
+    "athlete_debug": {
+      "command": "/bin/bash",
+      "args": [
+        "-lc",
+        "exec 2>>\"$HOME/athlete-mcp-debug.log\"; export PATH=/opt/homebrew/opt/node@20/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin; export MCP_DEBUG=1; export ATHLETE_MCP_DATA_DIR=\"$HOME/Library/Application Support/athlete-context-mcp-debug\"; /opt/homebrew/opt/node@20/bin/node /CHEMIN/VERS/athlete-context-mcp/dist/index.js"
+      ]
+    }
+  }
+}
+```
+
+### Variable d'environnement
+
+| Variable | Défaut (macOS) | Description |
+|----------|---------------|-------------|
+| `ATHLETE_MCP_DATA_DIR` | `~/Library/Application Support/athlete-context-mcp` | Répertoire de la base SQLite |
+| `MCP_DEBUG` | — | `1` pour activer les logs internes |
+
+---
+
+## Tools disponibles
+
+### Bootstrap
+
+#### `get_context` ⭐
+Appel de démarrage de conversation. Retourne en une seule requête :
+profil + objectifs + politiques + état courant + 3 dernières notes.
+
+```json
+{}
+```
+
+---
+
+### Profil
+
+#### `get_athlete_profile`
+Retourne le profil complet (versioned).
+
+```json
+{}
+```
+
+#### `upsert_athlete_profile`
+Crée ou met à jour le profil. Tous les champs sont optionnels ; seuls les
+champs envoyés sont persistés (merge avec Zod strip).
+
+Champs de premier niveau :
+
+| Champ | Type | Description |
+|-------|------|-------------|
+| `name` | string | Prénom / nom |
+| `age` | integer | Âge |
+| `weight_kg` | number | Poids en kg |
+| `hr_max` | integer | FC max (bpm) |
+| `lthr_run` | integer | LTHR course (bpm) |
+| `ftp_bike_ref` | integer | FTP vélo référence (W) |
+| `ftp_bike_current` | integer | FTP vélo actuel (W) |
+| `hr_zones_run` | HRZone[] | 7 zones FC course |
+| `hr_zones_bike` | HRZone[] | 7 zones FC vélo |
+| `pace_zones_run` | PaceZone[] | 5 zones allure course |
+| `biomechanics_targets` | object | Cibles biomécaniques (cadence, GCT, OV, VR) |
+| `injury_history` | Injury[] | Antécédents médicaux |
+| `training_pattern` | object | Jours d'entraînement habituels |
+| `equipment` | object | Matériel disponible |
+| `schedule_constraints` | object | Contraintes planning hebdo |
+| `session_naming_convention` | object | Règle de nommage des séances |
+| `training_volume_targets` | object | Volumes et fréquences cibles |
+| `constraints` | string[] | Contraintes libres |
+
+**`equipment`** :
+```
+bike_name, shoes_run_name, wetsuit (bool), power_meter (bool),
+heart_rate_monitor (bool), smart_trainer (bool), swim_goggles (bool), notes
+```
+
+**`schedule_constraints`** :
+```
+available_days (string[]), unavailable_days (string[]),
+preferred_time (morning|midday|evening|flexible),
+max_session_duration_min, min_rest_days_per_week, notes
+```
+
+**`session_naming_convention`** :
+```
+format (e.g. "{date}_{discipline}_{type}_{duration}min"),
+prefix, date_format, discipline_codes (record string→string), example, notes
+```
+
+**`training_volume_targets`** :
+```
+weekly_run_km, weekly_bike_km, weekly_swim_m,
+sessions_per_week_run, sessions_per_week_bike, sessions_per_week_swim,
+long_run_km, long_bike_km, phase, notes
+```
+
+---
+
+### Objectifs
+
+#### `get_athlete_goals`
+Retourne les objectifs de saison (versioned).
+
+#### `upsert_athlete_goals`
+
+```
+events: Event[]          — Liste des courses/épreuves
+  name, date (YYYY-MM-DD), discipline (run|triathlon|swim|bike|vtt)
+  priority (A|B|C), target_time?, notes?
+current_phase?:
+  code (P0|P1|P2…), description, start_date, current_week,
+  target_weekly_volume_km
+season_notes?
+```
+
+---
+
+### Politiques
+
+#### `get_athlete_policies`
+Retourne les règles d'entraînement actives (versioned).
+
+#### `upsert_athlete_policies`
+
+```
+rules: PolicyRule[]
+  id, description, condition?, action?,
+  severity (info|warn|block)
+```
+
+---
+
+### État quotidien
+
+#### `get_athlete_state`
+Retourne l'état courant : métriques calculées depuis les notes + dernière
+évaluation subjective.
+
+#### `update_athlete_state`
+Enregistre l'état subjectif du jour et recalcule les métriques.
+
+```
+ankle_pain      0–10   Douleur cheville
+fatigue         0–10   Fatigue subjective
+sleep_quality   0–10   Qualité sommeil
+comment?               Commentaire libre
+```
+
+Métriques calculées (14 derniers jours de notes) :
+- `stress_trend_7d`, `rpe_trend_7d`
+- `pain_watchlist` : top 3 zones douloureuses (occurrences + intensité moyenne)
+- `solo_ratio_14d`
+- `readiness_subjective` 0–100 : `100 - 5×stress - 3×rpe - 8×pain_max`
+- `flags` : `high_stress`, `pain_risk`
+
+---
+
+### Notes
+
+#### `add_note`
+Ajoute une note (analyse de séance, bilan hebdo, décision planning).
+
+```
+note_text*    string   Contenu complet (requis, minLength: 1)
+note_date?    string   YYYY-MM-DD (défaut: aujourd'hui)
+type?         enum     analyse_seance | bilan_semaine | decision_plan
+                       | state_update | general
+tags?         string[] Ex: ["run", "vélo", "récupération"]
+activity_id?  string   ID activité Garmin (optionnel)
+```
+
+Retourne `note_id` (entier) pour récupération ultérieure.
+
+L'extraction automatique analyse `note_text` pour en extraire :
+RPE, stress, sommeil, contexte social, zones douloureuses.
+
+#### `get_note`
+Récupère une note par son identifiant numérique.
+
+```
+note_id   integer   ID retourné par add_note
+```
+
+#### `search_notes`
+Recherche des notes avec filtres combinables.
+
+```
+query?      string   Recherche plein texte
+date_from?  string   YYYY-MM-DD
+date_to?    string   YYYY-MM-DD
+type?       enum     (voir add_note)
+tags?       string[] Filtre par tags (matching OR)
+limit?      integer  Défaut 10
+```
+
+---
+
+## Schémas de données
+
+### HRZone
+```
+zone (1–7), name?, min_bpm?, max_bpm?
+```
+
+### PaceZone
+```
+zone (1–5), name?, min_pace_per_km? ("mm:ss"), max_pace_per_km?
+```
+
+### Injury
+```
+area, description?, start_date?, end_date?, severity (0–10)?
+```
+
+### Extraction automatique (note_text)
+
+| Champ extrait | Patterns reconnus |
+|--------------|-------------------|
+| `rpe` 1–10 | `RPE 7`, `8/10`, `ressenti=6` |
+| `stress` 0–10 | `stress 6/10`, `stress=4` |
+| `sleep_quality` 0–10 | `sommeil 7/10`, `sleep=8` |
+| `social_context` | `seul/solo` → solo, `couple` → couple, `amis` → amis, `club` → club |
+| `pain[].area` | mollet, genou, tibia, tendon, fesse, dos, cheville, épaule |
+| `pain[].intensity` | chiffre `/10` ou `= N` après le nom de la zone |
+
+---
+
+## Base de données SQLite
+
+Chemin par défaut (macOS) : `~/Library/Application Support/athlete-context-mcp/athlete.db`
+
+Créée et migrée automatiquement au démarrage.
+
+```sql
+CREATE TABLE IF NOT EXISTS versions_profile
+  (id INTEGER PRIMARY KEY, version INTEGER, json TEXT, updated_at TEXT);
+
+CREATE TABLE IF NOT EXISTS versions_goals
+  (id INTEGER PRIMARY KEY, version INTEGER, json TEXT, updated_at TEXT);
+
+CREATE TABLE IF NOT EXISTS versions_policies
+  (id INTEGER PRIMARY KEY, version INTEGER, json TEXT, updated_at TEXT);
+
+CREATE TABLE IF NOT EXISTS versions_state
+  (id INTEGER PRIMARY KEY, version INTEGER, json TEXT, updated_at TEXT);
+
+CREATE TABLE IF NOT EXISTS notes (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity_id   TEXT,
+  note_date     TEXT,
+  type          TEXT,        -- migration automatique sur ancienne DB
+  raw_text      TEXT,
+  tags_json     TEXT,
+  extracted_json TEXT,
+  created_at    TEXT
+);
+```
+
+Les tables `versions_*` stockent un unique enregistrement `id=1` avec :
+- `version` : incrémenté à chaque `upsert`
+- `json` : données sérialisées
+- `updated_at` : ISO 8601
+
+### Robustesse SQLite (multi-instances)
+
+- WAL (`journal_mode = WAL`) pour lectures concurrentes
+- `busy_timeout = 5000ms`
+- Retry exponentiel sur `SQLITE_BUSY/SQLITE_LOCKED` : 5 tentatives, backoff 50→100→200→300→500 ms
+
+---
+
+## Débogage
 
 ```bash
-npm run dev
+# Logs dans ~/athlete-mcp.log
+tail -f ~/athlete-mcp.log
+
+# Mode debug (logs SQLite + répertoire de données)
+MCP_DEBUG=1 node dist/index.js
+
+# Test d'initialisation
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' \
+  | node dist/index.js
+
+# Liste des tools
+echo '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+  | node dist/index.js | python3 -m json.tool
 ```
+
+---
 
 ## Architecture
 
-Le serveur utilise:
-- **SDK officiel**: `@modelcontextprotocol/sdk` (v1.25.3) pour l'API de gestion des tools et le transport stdio
-- **Transport**: stdio (newline-delimited JSON-RPC 2.0), compatible Claude Desktop
-- **Validation**: `zod` pour tous les inputs et schémas JSON
-- **Stockage**: SQLite local (chemin configurable, auto-migré au démarrage)
-- **Extraction**: heuristique déterministe (pas d'appels LLM)
-
-## Configuration - Répertoire de données
-
-Par défaut, la base de données SQLite est stockée dans un répertoire portable:
-
-- **macOS**: `~/Library/Application Support/athlete-context-mcp/athlete.db`
-- **Linux/Autres**: `~/.athlete-context-mcp/athlete.db`
-
-Vous pouvez personnaliser le répertoire via la variable d'environnement:
-
-```bash
-# Utiliser un répertoire custom
-export ATHLETE_MCP_DATA_DIR=/custom/path
-npm start
-
-# Ou sur une seule commande
-ATHLETE_MCP_DATA_DIR=/custom/path npx github:kerfich/athlete-context-mcp#v0.2.2 athlete-context-mcp
-```
-
-Pour déboguer le chemin utilisé:
-
-```bash
-MCP_DEBUG=1 npm start
-# Affichera: [athlete-context-mcp] Data directory: /path/to/data
-```
-
-## Configuration - Concurrence SQLite (multi-instances)
-
-Quand plusieurs instances MCP démarrent (ex: `athlete` + `athlete_debug` dans Claude Desktop), la base de données SQLite peut rencontrer des verrous. Le serveur gère ceci automatiquement :
-
-### Pragmas SQLite
-
-À l'initialisation:
-- **WAL (Write-Ahead Logging)**: Active les lectures concurrentes
-- **busy_timeout=5000**: Attend jusqu'à 5 secondes si la DB est verrouillée
-- **synchronous=NORMAL**: Balance durabilité/performance
-- **locking_mode=NORMAL**: Permet plusieurs lecteurs
-
-### Stratégie de Retry
-
-Les écritures (insert/update) sont encapsulées dans une logique de retry:
-- **Max retries**: 5 tentatives
-- **Backoff exponentiel**: 50ms → 100ms → 200ms → 300ms → 500ms
-- **Erreurs gérées**: `SQLITE_BUSY`, `SQLITE_LOCKED`, `database is locked`
-- **Logs**: Si échec final, message d'erreur propre (pas de crash silencieux)
-
-Debug les retries:
-```bash
-MCP_DEBUG=1 npm start
-# Affichera: [athlete-context-mcp] SQLite: WAL enabled, busy_timeout=5000ms
-# Et: [athlete-context-mcp] Database locked (attempt 1/5), retrying in 50ms...
-```
-
-### Si vous lancez debug + production
-
-Pour éviter les contentions si vous testez plusieurs instances simultanément, utilisez des data directories séparés:
-
-```bash
-# Terminal 1: Instance prod
-export ATHLETE_MCP_DATA_DIR=~/.athlete-context-mcp-prod
-npm start
-
-# Terminal 2: Instance debug
-export ATHLETE_MCP_DATA_DIR=~/.athlete-context-mcp-debug
-export MCP_DEBUG=1
-npm start
-```
-
-## Protocole MCP (JSON-RPC 2.0)
-
-Le serveur expose les méthodes MCP standard via process stdio (une ligne JSON par message).
-
-### Initialize (handshake)
-
-**Request:**
-```json
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"client","version":"1.0"}}}
-```
-
-**Response:**
-```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"athlete-context-mcp","version":"0.1.0"}}}
-```
-
-### ListTools
-
-**Request:**
-```json
-{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
-```
-
-**Response:**
-```json
-{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"get_profile","description":"Get athlete profile (versioned)","inputSchema":{}},{"name":"add_note","description":"Add a note linked to a Garmin activity","inputSchema":{...}},...]}}
-```
-
-## Tools - Exemples complets
-
-### 1. add_note
-
-**Description**: Ajouter une note liée à une activité Garmin avec extraction automatique.
-
-**Request:**
-```json
-{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"add_note","arguments":{"activity_id":"run_20260128_morning","note_text":"RPE 7, stress 6/10, sommeil 5/10, douleur légère mollet 3/10, seul","note_date":"2026-01-28","tags":["recovery","easy"]}}}
-```
-
-**Response:**
-```json
-{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"json","json":{"note_id":1,"activity_id":"run_20260128_morning","extracted":{"rpe":7,"stress":6,"sleep_quality":5,"social_context":"solo","pain":[{"area":"mollet","intensity":3}],"raw_text":"RPE 7, stress 6/10, sommeil 5/10, douleur légère mollet 3/10, seul"},"created_at":"2026-01-28T10:30:00.000Z"}}]}}
-```
-
-### 2. get_state
-
-**Description**: Récupérer l'état synthétique de l'athlète calculé à partir des notes.
-
-**Request:**
-```json
-{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_state","arguments":{}}}
-```
-
-**Response:**
-```json
-{"jsonrpc":"2.0","id":4,"result":{"content":[{"type":"json","json":{"state":{"stress_trend_7d":5.5,"rpe_trend_7d":6.2,"pain_watchlist":[{"area":"mollet","occurrences":2,"avg_intensity":3}],"solo_ratio_14d":0.75,"readiness_subjective":72,"flags":["high_stress"]},"version":1,"updated_at":"2026-01-28T10:30:00.000Z"}}]}}
-```
-
-### 3. search_notes
-
-**Description**: Rechercher des notes par requête texte avec filtres optionnels.
-
-**Request:**
-```json
-{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"search_notes","arguments":{"query":"mollet","since":"2026-01-20","until":"2026-01-28","limit":10}}}
-```
-
-**Response:**
-```json
-{"jsonrpc":"2.0","id":5,"result":{"content":[{"type":"json","json":{"results":[{"id":1,"activity_id":"run_20260128_morning","note_date":"2026-01-28","raw_text":"RPE 7, stress 6/10, sommeil 5/10, douleur légère mollet 3/10, seul","tags":["recovery","easy"],"extracted":{"rpe":7,"stress":6,"sleep_quality":5,"social_context":"solo","pain":[{"area":"mollet","intensity":3}],"raw_text":"..."},"created_at":"2026-01-28T10:30:00.000Z"}]}}]}}
-```
-
-## Autres Tools
-
-- `get_profile()` / `upsert_profile(profile)` — Profil athlète (versioned)
-- `get_goals()` / `upsert_goals(goals)` — Objectifs (versioned)
-- `get_policies()` / `upsert_policies(policies)` — Policies (versioned)
-- `get_note(activity_id)` — Récupérer une note par activité
-- `update_state()` — Recalculer l'état de l'athlète
-
-## DB Schema
-
-SQLite auto-migré au démarrage :
-
-```sql
-CREATE TABLE IF NOT EXISTS versions_profile (id INTEGER PRIMARY KEY, version INTEGER, json TEXT, updated_at TEXT);
-CREATE TABLE IF NOT EXISTS versions_goals (id INTEGER PRIMARY KEY, version INTEGER, json TEXT, updated_at TEXT);
-CREATE TABLE IF NOT EXISTS versions_policies (id INTEGER PRIMARY KEY, version INTEGER, json TEXT, updated_at TEXT);
-CREATE TABLE IF NOT EXISTS notes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  activity_id TEXT,
-  note_date TEXT,
-  raw_text TEXT,
-  tags_json TEXT,
-  extracted_json TEXT,
-  created_at TEXT
-);
-CREATE TABLE IF NOT EXISTS versions_state (id INTEGER PRIMARY KEY, version INTEGER, json TEXT, updated_at TEXT);
-```
-
-## Fichier DB
-
-- Emplacement: Configurable via `ATHLETE_MCP_DATA_DIR` (voir section "Configuration")
-- Par défaut:
-  - **macOS**: `~/Library/Application Support/athlete-context-mcp/athlete.db`
-  - **Linux/Autres**: `~/.athlete-context-mcp/athlete.db`
-- Créé automatiquement au premier démarrage
-- Compatible avec better-sqlite3
-
-## Extraction de notes (heuristique)
-
-Le serveur extrait automatiquement depuis `note_text` :
-- **RPE** (1-10): patterns "RPE 7", "8/10", "ressenti=6"
-- **Stress** (0-10): "stress 7/10", "stress=6"
-- **Sommeil** (0-10): "sommeil 5/10"
-- **Contexte social**: enum (solo, couple, amis, club, unknown) via mots-clés
-- **Douleur**: zones + intensité via mots-clés (mollet, genou, tibia, tendon, fesse, dos, cheville, épaule)
-
-Exemple texte:
-```
-"RPE 7, stress 6/10, sommeil 5/10, mollet 3/10, seul"
-```
-
-Extracted:
-```json
-{
-  "rpe": 7,
-  "stress": 6,
-  "sleep_quality": 5,
-  "social_context": "solo",
-  "pain": [{"area": "mollet", "intensity": 3}],
-  "raw_text": "RPE 7, stress 6/10, sommeil 5/10, mollet 3/10, seul"
-}
-```
-
-## État synthétique (athlete_state)
-
-Calculé à partir des notes passées (14 jours par défaut) :
-
-- **stress_trend_7d**: moyenne glissante stress (7 jours)
-- **rpe_trend_7d**: moyenne glissante RPE (7 jours)
-- **pain_watchlist**: top 3 zones avec occurrences + intensité moyenne
-- **solo_ratio_14d**: proportion d'entraînements solo
-- **readiness_subjective**: score 0-100 (formule simple: 100 - 5×stress - 3×rpe - 8×pain_max)
-- **flags**: ["high_stress", "pain_risk", ...] si conditions atteintes
-
-## Intégration Claude Desktop
-
-### Option 1: Locale (repo cloné)
-
-Configuration `claude_desktop_config.json` (macOS: `~/Library/Application\ Support/Claude/claude_desktop_config.json`) :
-
-```json
-{
-  "mcpServers": {
-    "athlete": {
-      "command": "node",
-      "args": ["/path/to/athlete-context-mcp/dist/index.js"]
-    }
-  }
-}
-```
-
-Puis redémarrer Claude Desktop.
-
-### Option 2: Via npm depuis GitHub (recommandé)
-
-Installez directement depuis GitHub (pas besoin de cloner le repo localement). Le binaire `athlete-context-mcp` est exposé via npm.
-
-Configuration `claude_desktop_config.json` :
-
-```json
-{
-  "mcpServers": {
-    "athlete": {
-      "command": "npx",
-      "args": [
-        "--yes",
-        "--package",
-        "github:kerfich/athlete-context-mcp#v0.2.0",
-        "athlete-context-mcp"
-      ]
-    }
-  }
-}
-```
-
-**Notes:**
-- Remplacer `kerfich/athlete-context-mcp` par votre GitHub org/repo.
-- Remplacer `v0.2.0` par un tag/release ou commit SHA pour reproductibilité (**recommandé**).
-- Alternative: `github:kerfich/athlete-context-mcp#main` pour toujours utiliser la branche main (moins stable).
-- **Prérequis**: Node 20+ installé localement.
-
-Redémarrer Claude Desktop après la modification.
-
-### Option 3: Claude Desktop macOS avec PATH minimal
-
-Claude Desktop s'exécute dans un environnement avec PATH limité sur macOS (Homebrew n'ajoute pas `/opt/homebrew/bin` par défaut). Si vous recevez une erreur `command not found: npx`, utilisez le chemin absolu vers npx ou node.
-
-#### Configuration avec chemin absolu
-
-Si Node 20 est installé via Homebrew:
-
-```bash
-# Trouver le chemin absolu vers npx
-which npx
-# Output: /opt/homebrew/bin/npx
-
-# Ou via Homebrew
-ls /opt/homebrew/opt/node@20/bin/
-# Output: node  npm  npx
-```
-
-Mettez à jour `claude_desktop_config.json` avec le chemin absolu:
-
-```json
-{
-  "mcpServers": {
-    "athlete": {
-      "command": "/opt/homebrew/opt/node@20/bin/npx",
-      "args": [
-        "--yes",
-        "--package",
-        "github:kerfich/athlete-context-mcp#v0.2.0",
-        "athlete-context-mcp"
-      ]
-    }
-  }
-}
-```
-
-Ou directement avec node:
-
-```json
-{
-  "mcpServers": {
-    "athlete": {
-      "command": "/opt/homebrew/opt/node@20/bin/node",
-      "args": ["/path/to/athlete-context-mcp/dist/index.js"]
-    }
-  }
-}
-```
-
-#### Vérifier votre configuration
-
-```bash
-# Vérifier que Node 20 est installé
-node --version
-# v20.x.x
-
-# Vérifier le PATH de npx
-ls -la /opt/homebrew/opt/node@20/bin/npx
-# ou si vous utilisez node@latest
-ls -la /opt/homebrew/bin/npx
-```
-
-Redémarrer Claude Desktop après la modification.
-
-## Robustesse du binaire
-
-Le binaire npm est conçu pour fonctionner dans des environnements avec PATH minimal (ex: Claude Desktop, containers, CI/CD).
-
-### Vérifications de sécurité
-
-Le build automatise les contrôles:
-
-```bash
-# Build compile + rend le binaire exécutable + vérifie l'intégrité
-npm run build
-
-# Verify.dist vérifie:
-# 1. Présence de McpServer dans le code compilé
-# 2. Permissions exécutables sur dist/index.js
-npm run verify:dist
-```
-
-### Shebang et chaîne d'exécution
-
-- ✅ Shebang `#!/usr/bin/env node` présent dans dist/index.js
-- ✅ dist/index.js est exécutable (permissions 755)
-- ✅ Champ "bin" du package.json: `"athlete-context-mcp": "dist/index.js"`
-
-### Gestion des erreurs
-
-Le serveur écrit **uniquement** sur stderr pour les logs (stdout reste propre pour JSON-RPC):
-
-```bash
-# Erreur : écrite sur stderr
-athlete-context-mcp server connected on stdio
-
-# Réponse JSON-RPC : écrite sur stdout
-{"result":{"protocolVersion":"2024-11-05",...},"jsonrpc":"2.0","id":1}
-```
-
-## Déploiement
-
-### Publier une release
-
-```bash
-npm version patch  # ou minor / major
-git push origin main --follow-tags
-```
-
-Créer une release GitHub correspondante au tag pour distribution via `npx`.
-## Test local
-
-### Démarrer le serveur
-
-```bash
-npm run build
-npm start
-```
-
-Le serveur écoute sur stdin/stdout et affiche les logs sur stderr:
-```
-athlete-context-mcp server connected on stdio
-```
-
-### Tester manuellement avec echo
-
-```bash
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}' | node dist/index.js
-```
-
-Response:
-```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"athlete-context-mcp","version":"0.2.0"}}}
-```
-
-### Tester tools/list
-
-```bash
-echo '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | node dist/index.js
-```
-
-## Test npx depuis GitHub
-
-Installer et lancer la dernière version depuis GitHub:
-
-```bash
-# Depuis un tag spécifique (recommandé pour reproductibilité)
-npx --yes --package github:kerfich/athlete-context-mcp#v0.2.0 athlete-context-mcp
-
-# Ou depuis main (branche par défaut)
-npx --yes --package github:kerfich/athlete-context-mcp#main athlete-context-mcp
-```
-
-Le serveur démarre et attend les requêtes JSON-RPC 2.0 sur stdin.
-
-Pour tester une requête:
-```bash
-(echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}'; sleep 1) | \
-  npx --yes --package github:kerfich/athlete-context-mcp#main athlete-context-mcp
-```
+| Fichier | Rôle |
+|---------|------|
+| `src/index.ts` | Enregistrement des tools MCP, transport stdio |
+| `src/models.ts` | Schémas Zod (profil, objectifs, politiques, notes, état) |
+| `src/tools.ts` | Implémentations CRUD (SQLite) |
+| `src/state.ts` | Calcul des métriques dérivées depuis les notes |
+| `src/extractor.ts` | Extraction heuristique depuis `note_text` |
+| `src/db.ts` | Initialisation SQLite, migrations, retry |
+
+**Note technique** — `inputSchema` : les schémas Zod passés à `server.tool()` utilisent
+`.shape` (objet brut `{ clé: ZodType }`) et non l'instance `ZodObject` directement.
+Le SDK MCP v1.25+ détecte les instances ZodObject et les traite comme `annotations`,
+laissant `inputSchema` vide — ce qui ferait échouer tous les appels.
+
+---
+
+## Changelog
+
+### v0.3.0
+- **Fix critique** : `inputSchema` correctement exposé (`.shape` au lieu de `ZodObject`)  
+  → les arguments sont désormais reçus et persistés dans les handlers
+- **Nouveau tool** : `get_context` — bootstrap en un appel (profil + objectifs + politiques + état + 3 notes)
+- **`add_note`** : champ `type` (enum), `activity_id` optionnel, guard `note_text`
+- **`update_athlete_state`** : évaluation subjective (ankle_pain, fatigue, sleep_quality, comment)
+- **`search_notes`** : filtres date_from/date_to, type, tags
+- **`upsert_athlete_profile`** : 4 nouveaux champs — `equipment`, `schedule_constraints`, `session_naming_convention`, `training_volume_targets`
+- Migration DB automatique : colonne `type` sur la table `notes`
+- Guards défensifs dans `add_note` et `extractFromText`
+
+### v0.2.2
+- Data directory configurable via `ATHLETE_MCP_DATA_DIR`
+- Support macOS `~/Library/Application Support`
+
+### v0.2.0
+- Transport stdio, SDK MCP officiel
+- Tools : get/upsert profil, objectifs, politiques, notes, état
