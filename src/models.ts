@@ -297,3 +297,46 @@ export const AthleteState = z.object({
 });
 
 export type AthleteState = z.infer<typeof AthleteState>;
+
+// --- Sleep log (one entry per night, upsert by date) ---
+
+export const SleepLogEntry = z.object({
+  date: z.string().describe("Night date YYYY-MM-DD (required)"),
+
+  // Duration & quality
+  duration_min: z.number().int().optional().describe("Effective sleep duration in minutes"),
+  score: z.number().int().min(0).max(100).optional().describe("Garmin sleep score 0–100"),
+  qualifier: z
+    .enum(["poor", "fair", "good", "excellent"])
+    .optional()
+    .describe("Garmin sleep quality qualifier"),
+
+  // HRV
+  hrv_avg_ms: z
+    .number()
+    .optional()
+    .describe("Average overnight HRV in ms (RMSSD)"),
+  hrv_status: z
+    .enum(["balanced", "unbalanced", "low"])
+    .optional()
+    .describe("HRV status vs personal baseline"),
+  hrv_baseline_low: z
+    .number()
+    .optional()
+    .describe("Lower bound of personal HRV baseline (ms)"),
+  hrv_baseline_high: z
+    .number()
+    .optional()
+    .describe("Upper bound of personal HRV baseline (ms)"),
+
+  // Cardiovascular
+  resting_hr_bpm: z.number().int().optional().describe("Resting heart rate in bpm"),
+
+  // Sleep stages
+  deep_pct: z.number().min(0).max(100).optional().describe("Deep sleep %"),
+  rem_pct: z.number().min(0).max(100).optional().describe("REM sleep %"),
+  light_pct: z.number().min(0).max(100).optional().describe("Light sleep %"),
+  awake_min: z.number().int().optional().describe("Minutes awake during the night"),
+});
+
+export type SleepLogEntry = z.infer<typeof SleepLogEntry>;

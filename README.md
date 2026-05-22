@@ -1,8 +1,9 @@
-# athlete-context-mcp — v0.3.0
+# athlete-context-mcp — v0.3.1
 
 Serveur MCP (Model Context Protocol) qui persiste le contexte d'un athlète
 triathlon entre les conversations Claude : profil physiologique, objectifs
-de saison, politiques d'entraînement, état quotidien et journal de notes.
+de saison, politiques d'entraînement, état quotidien, journal de notes et
+suivi du sommeil (HRV, dette, streaks).
 
 ---
 
@@ -15,6 +16,7 @@ de saison, politiques d'entraînement, état quotidien et journal de notes.
 - [Base de données SQLite](#base-de-données-sqlite)
 - [Extraction automatique des notes](#extraction-automatique-des-notes)
 - [Débogage](#débogage)
+- [Changelog](#changelog)
 
 ---
 
@@ -86,7 +88,7 @@ Redémarrer Claude Desktop après modification.
 
 #### `get_context` ⭐
 Appel de démarrage de conversation. Retourne en une seule requête :
-profil + objectifs + politiques + état courant + 3 dernières notes.
+profil + objectifs + politiques + état courant + 3 dernières notes + tendances sommeil 7 jours.
 
 ```json
 {}
@@ -257,6 +259,50 @@ limit?      integer  Défaut 10
 
 ---
 
+### Sommeil
+
+#### `upsert_sleep_log`
+Insère ou met à jour une entrée de sommeil pour une nuit donnée. Ré-envoyer
+la même `date` écrase l'entrée précédente (idéal après une synchro Garmin).
+Seul `date` est obligatoire.
+
+```
+date*           string   YYYY-MM-DD (requis)
+duration_min?   integer  Durée effective en minutes
+score?          integer  Score Garmin 0–100
+qualifier?      enum     poor | fair | good | excellent
+hrv_avg_ms?     number   HRV nocturne moyenne (RMSSD, ms)
+hrv_status?     enum     balanced | unbalanced | low
+hrv_baseline_low/high?  number  Fourchette baseline personnelle (ms)
+resting_hr_bpm? integer  FC repos (bpm)
+deep_pct?       number   % sommeil profond
+rem_pct?        number   % sommeil REM
+light_pct?      number   % sommeil léger
+awake_min?      integer  Minutes d'éveil nocturne
+```
+
+#### `get_sleep_trends`
+Retourne les entrées brutes + métriques calculées sur les N dernières nuits
+(défaut 14, max 30).
+
+```
+days?   integer   Fenêtre d'analyse en nuits (défaut 14, max 30)
+```
+
+Métriques retournées dans `trends` :
+
+| Métrique | Description |
+|----------|-------------|
+| `unbalanced_streak` | Nuits consécutives (depuis la plus récente) avec `hrv_status` ≠ `balanced` |
+| `sleep_debt_7d_min` | Déficit cumulé vs objectif 7h/nuit sur les 7 dernières nuits (minutes) |
+| `avg_duration_7d_min` | Durée moyenne sur 7 nuits |
+| `avg_score_7d` | Score Garmin moyen sur 7 nuits |
+| `hrv_avg_7d` | HRV moyen sur 7 nuits |
+| `hrv_trend` | `improving` / `stable` / `declining` / `insufficient_data` (comparaison 3 nuits récentes vs 3 précédentes, seuil ±3 ms) |
+| `qualifier_dist_7d` | Répartition `{ poor, fair, good, excellent }` sur 7 nuits |
+
+---
+
 ## Schémas de données
 
 ### HRZone
@@ -316,6 +362,25 @@ CREATE TABLE IF NOT EXISTS notes (
   extracted_json TEXT,
   created_at    TEXT
 );
+
+CREATE TABLE IF NOT EXISTS sleep_log (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  date              TEXT UNIQUE NOT NULL,   -- clé d'upsert
+  duration_min      INTEGER,
+  score             INTEGER,
+  hrv_avg_ms        REAL,
+  hrv_status        TEXT,
+  hrv_baseline_low  REAL,
+  hrv_baseline_high REAL,
+  resting_hr_bpm    INTEGER,
+  deep_pct          REAL,
+  rem_pct           REAL,
+  light_pct         REAL,
+  awake_min         INTEGER,
+  qualifier         TEXT,
+  created_at        TEXT,
+  updated_at        TEXT
+);
 ```
 
 Les tables `versions_*` stockent un unique enregistrement `id=1` avec :
@@ -355,9 +420,9 @@ echo '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
 
 | Fichier | Rôle |
 |---------|------|
-| `src/index.ts` | Enregistrement des tools MCP, transport stdio |
-| `src/models.ts` | Schémas Zod (profil, objectifs, politiques, notes, état) |
-| `src/tools.ts` | Implémentations CRUD (SQLite) |
+| `src/index.ts` | Enregistrement des 14 tools MCP, transport stdio |
+| `src/models.ts` | Schémas Zod (profil, objectifs, politiques, notes, état, sommeil) |
+| `src/tools.ts` | Implémentations CRUD (SQLite), calcul tendances sommeil |
 | `src/state.ts` | Calcul des métriques dérivées depuis les notes |
 | `src/extractor.ts` | Extraction heuristique depuis `note_text` |
 | `src/db.ts` | Initialisation SQLite, migrations, retry |
@@ -370,6 +435,12 @@ laissant `inputSchema` vide — ce qui ferait échouer tous les appels.
 ---
 
 ## Changelog
+
+### v0.3.1
+- **Nouveau tool** : `upsert_sleep_log` — entrée par nuit (date, duration, score, HRV, FC repos, phases, qualifier) avec sémantique upsert sur `date`
+- **Nouveau tool** : `get_sleep_trends` — tendances calculées sur N nuits : `unbalanced_streak`, `sleep_debt_7d_min`, `hrv_trend` (improving/stable/declining), `qualifier_dist_7d`, moyennes score/durée/HRV
+- **`get_context`** : inclut désormais `sleep: get_sleep_trends(7)` pour le bootstrap
+- Table SQLite `sleep_log` créée automatiquement au démarrage (migration sûre)
 
 ### v0.3.0
 - **Fix critique** : `inputSchema` correctement exposé (`.shape` au lieu de `ZodObject`)  

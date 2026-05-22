@@ -15,6 +15,8 @@ import {
   search_notes,
   get_state,
   update_state,
+  upsert_sleep_log,
+  get_sleep_trends,
   get_context,
 } from "./tools.js";
 import {
@@ -23,6 +25,7 @@ import {
   AthletePolicies,
   NoteInput,
   SubjectiveStateInput,
+  SleepLogEntry,
   NOTE_TYPES,
 } from "./models.js";
 
@@ -128,6 +131,30 @@ async function main() {
       limit: z.number().int().optional().describe("Max results (default 10)"),
     },
     async (args) => ok(search_notes(args))
+  );
+
+  // --- Sleep log ---
+
+  server.tool(
+    "upsert_sleep_log",
+    "Insert or update a sleep log entry for a given night. Re-submitting the same date overwrites the entry (useful after a Garmin sync). Only 'date' is required — send only fields available.",
+    SleepLogEntry.shape,
+    async (args) => ok(upsert_sleep_log(args))
+  );
+
+  server.tool(
+    "get_sleep_trends",
+    "Return raw sleep entries + computed trends for the last N nights (default 14). Trends include: HRV direction, consecutive unbalanced streak, 7-day sleep debt vs 7h/night target, qualifier distribution.",
+    {
+      days: z
+        .number()
+        .int()
+        .min(1)
+        .max(30)
+        .optional()
+        .describe("Look-back window in nights (default 14, max 30)"),
+    },
+    async (args) => ok(get_sleep_trends(args.days ?? 14))
   );
 
   // --- Bootstrap ---

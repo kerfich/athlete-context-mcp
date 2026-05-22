@@ -52,6 +52,24 @@ CREATE TABLE IF NOT EXISTS notes (
   extracted_json TEXT,
   created_at TEXT
 );
+CREATE TABLE IF NOT EXISTS sleep_log (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  date              TEXT UNIQUE NOT NULL,
+  duration_min      INTEGER,
+  score             INTEGER,
+  hrv_avg_ms        REAL,
+  hrv_status        TEXT,
+  hrv_baseline_low  REAL,
+  hrv_baseline_high REAL,
+  resting_hr_bpm    INTEGER,
+  deep_pct          REAL,
+  rem_pct           REAL,
+  light_pct         REAL,
+  awake_min         INTEGER,
+  qualifier         TEXT,
+  created_at        TEXT,
+  updated_at        TEXT
+);
 `);
 
 // Migrations (safe to run on existing DB)

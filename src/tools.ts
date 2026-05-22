@@ -1,6 +1,6 @@
 import db, { nowISO, withRetry } from "./db.js";
 import { z } from "zod";
-import { NoteInput, SubjectiveStateInput } from "./models.js";
+import { NoteInput, SubjectiveStateInput, SleepLogEntry } from "./models.js";
 import { extractFromText as extractor } from "./extractor.js";
 import { computeState } from "./state.js";
 
@@ -166,12 +166,136 @@ export function update_state(subjective: z.infer<typeof SubjectiveStateInput>) {
   });
 }
 
+// ── Sleep log ────────────────────────────────────────────────────────────────
+
+export function upsert_sleep_log(entry: SleepLogEntry) {
+  return withRetry(() => {
+    const now = nowISO();
+    db.prepare(`
+      INSERT INTO sleep_log
+        (date, duration_min, score, hrv_avg_ms, hrv_status,
+         hrv_baseline_low, hrv_baseline_high, resting_hr_bpm,
+         deep_pct, rem_pct, light_pct, awake_min, qualifier,
+         created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(date) DO UPDATE SET
+        duration_min      = excluded.duration_min,
+        score             = excluded.score,
+        hrv_avg_ms        = excluded.hrv_avg_ms,
+        hrv_status        = excluded.hrv_status,
+        hrv_baseline_low  = excluded.hrv_baseline_low,
+        hrv_baseline_high = excluded.hrv_baseline_high,
+        resting_hr_bpm    = excluded.resting_hr_bpm,
+        deep_pct          = excluded.deep_pct,
+        rem_pct           = excluded.rem_pct,
+        light_pct         = excluded.light_pct,
+        awake_min         = excluded.awake_min,
+        qualifier         = excluded.qualifier,
+        updated_at        = excluded.updated_at
+    `).run(
+      entry.date,
+      entry.duration_min   ?? null,
+      entry.score          ?? null,
+      entry.hrv_avg_ms     ?? null,
+      entry.hrv_status     ?? null,
+      entry.hrv_baseline_low  ?? null,
+      entry.hrv_baseline_high ?? null,
+      entry.resting_hr_bpm ?? null,
+      entry.deep_pct       ?? null,
+      entry.rem_pct        ?? null,
+      entry.light_pct      ?? null,
+      entry.awake_min      ?? null,
+      entry.qualifier      ?? null,
+      now, now
+    );
+    return { ok: true, date: entry.date, updated_at: now };
+  });
+}
+
+export function get_sleep_trends(days = 14) {
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+  const sinceStr = since.toISOString().split("T")[0];
+
+  const entries = db
+    .prepare("SELECT * FROM sleep_log WHERE date >= ? ORDER BY date DESC")
+    .all(sinceStr) as any[];
+
+  // ── helpers ──────────────────────────────────────────────────────────────
+  const avg = (arr: number[]): number | null =>
+    arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+
+  const nonNull = <T>(arr: (T | null | undefined)[]): T[] =>
+    arr.filter((v): v is T => v != null);
+
+  // ── window over last 7 entries ────────────────────────────────────────────
+  const last7 = entries.slice(0, 7);
+
+  // unbalanced_streak: consecutive entries from most recent with hrv_status != 'balanced'
+  let unbalanced_streak = 0;
+  for (const r of entries) {
+    if (r.hrv_status === "unbalanced" || r.hrv_status === "low") {
+      unbalanced_streak++;
+    } else {
+      break;
+    }
+  }
+
+  // sleep_debt_7d_min: cumulative deficit vs 7 h/night target over last 7 nights
+  const TARGET_MIN = 420;
+  const sleep_debt_7d_min = last7.reduce((sum: number, r: any) => {
+    return r.duration_min != null ? sum + (TARGET_MIN - r.duration_min) : sum;
+  }, 0);
+
+  // averages
+  const durations7 = nonNull(last7.map((r: any) => r.duration_min as number | null));
+  const scores7    = nonNull(last7.map((r: any) => r.score as number | null));
+  const hrv7       = nonNull(last7.map((r: any) => r.hrv_avg_ms as number | null));
+
+  // hrv_trend: compare average of 3 most recent nights vs 3 preceding nights
+  const hrv_trend = (() => {
+    if (hrv7.length < 4) return "insufficient_data";
+    const recent = avg(hrv7.slice(0, 3))!;
+    const older  = avg(hrv7.slice(3, 6))!;
+    if (recent > older + 3) return "improving";
+    if (recent < older - 3) return "declining";
+    return "stable";
+  })();
+
+  // qualifier distribution over last 7 nights
+  const qualifier_dist_7d: Record<string, number> = { poor: 0, fair: 0, good: 0, excellent: 0 };
+  for (const r of last7) {
+    if (r.qualifier && r.qualifier in qualifier_dist_7d) {
+      qualifier_dist_7d[r.qualifier]++;
+    }
+  }
+
+  const round1 = (n: number | null) => n !== null ? Math.round(n * 10) / 10 : null;
+
+  return {
+    period_days: days,
+    entries,
+    trends: {
+      unbalanced_streak,
+      sleep_debt_7d_min: Math.round(sleep_debt_7d_min),
+      avg_duration_7d_min: avg(durations7) !== null ? Math.round(avg(durations7)!) : null,
+      avg_score_7d:        avg(scores7)    !== null ? Math.round(avg(scores7)!)    : null,
+      hrv_avg_7d:          round1(avg(hrv7)),
+      hrv_trend,
+      qualifier_dist_7d,
+    },
+  };
+}
+
+// ── Bootstrap ────────────────────────────────────────────────────────────────
+
 export function get_context() {
   return {
-    profile: get_profile(),
-    goals: get_goals(),
-    policies: get_policies(),
-    state: get_state(),
+    profile:      get_profile(),
+    goals:        get_goals(),
+    policies:     get_policies(),
+    state:        get_state(),
     recent_notes: search_notes({ limit: 3 }),
+    sleep:        get_sleep_trends(7),
   };
 }
